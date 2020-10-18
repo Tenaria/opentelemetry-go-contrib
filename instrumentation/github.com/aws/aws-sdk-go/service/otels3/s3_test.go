@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 
-	"bitbucket.org/observability/obsvs-go/instrumentation/github.com/aws/aws-sdk-go/service/config"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go/service/config"
 	mockmeter "go.opentelemetry.io/contrib/internal/metric"
 	mocktrace "go.opentelemetry.io/contrib/internal/trace"
 	"go.opentelemetry.io/otel/api/global"
@@ -20,43 +20,46 @@ var (
 	tracerName = "mock-tracer"
 )
 
+type mockS3Client struct {
+	s3iface.S3API
+}
+
 func setupClient(spanCorrelationInMetrics bool) s3iface.S3API {
 	_, mockedTracer := mocktrace.NewTracerProviderAndTracer(tracerName)
 	_, mockedMeter := mockmeter.NewMeter()
 
-	mockedPropagators = global.TextMapPropagator()
+	mockedPropagators := global.TextMapPropagator()
 
-	client := &instrumentedS3(
+	client := &instrumentedS3{
 		&mockS3Client{},
-		mockedMeter,
 		mockedTracer,
+		mockedMeter,
 		mockedPropagators,
-		createCounters(),
-		createRecorders(),
-		global.TextMapPropagator(),
+		createCounters(mockedMeter),
+		createRecorders(mockedMeter),
 		spanCorrelationInMetrics,
-	)
+	}
 
 	return client
 }
 
 func TestS3_basicFunctionality_putObject(t *testing.T) {
 	type args struct {
-		ctx   aws.Context
-		input *s3.PutObjectInput
-		opts  []request.Option
+		context aws.Context
+		input   *s3.PutObjectInput
+		options []request.Option
 	}
 
 	testcases := []struct {
-		name               string
-		args               args
-		config             *config.Config
-		expectedStatusCode int
-		expectedError      error
-		client             *instrumentedS3
+		name           string
+		args           args
+		config         *config.Config
+		expectedStatus int
+		expectedError  error
+		client         s3iface.S3API
 	}{
 		{
-			testName:       "hi",
+			name:           "hi",
 			expectedStatus: 200,
 			expectedError:  nil,
 			args: args{
@@ -66,20 +69,15 @@ func TestS3_basicFunctionality_putObject(t *testing.T) {
 					Key:    aws.String("010101"),
 					Body:   bytes.NewReader([]byte("foo")),
 				},
-				opts: [],
 			},
 			client: setupClient(true),
-		},
-		{
-			testName:       "hi2",
-			expectedStatus: 200,
 		},
 	}
 
 	for _, tc := range testcases {
-		t.Run(tc.testName, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 
-			output, err := client.PutObjectWithContext(tc.args.context, tc.args.input, tc.args.options)
+			_, _ = tc.client.PutObjectWithContext(tc.args.context, tc.args.input, tc.args.options...)
 
 		})
 	}
